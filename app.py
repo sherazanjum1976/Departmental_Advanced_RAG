@@ -31,13 +31,12 @@ EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 GROQ_MODEL_NAME = "openai/gpt-oss-120b"
 TOP_K = 6
 
-CATEGORY_DISPLAY = {
-    "all": "All Categories",
-    "committees": "Committees",
-    "counsellors": "Counsellors",
-    "curriculum": "Curriculum",
-    "DARC": "DARC",
-}
+def category_display_label(category: str) -> str:
+    if category.lower() == "all":
+        return "All Categories"
+    if category.lower() == "darc":
+        return "DARC"
+    return category.replace("_", " ").title()
 
 # --------------------------------------------------------------------------
 # Page setup + styling
@@ -141,7 +140,7 @@ def search(index, metadata_payload, model, query: str, category: str,
         if score < relevance_threshold:
             continue
         meta = chunks_meta[idx]
-        if category != "all" and meta["category"] != category:
+        if category != "all" and meta["category"].lower() != category.lower():
             continue
         results.append({**meta, "score": score})
         if len(results) >= top_k:
@@ -235,7 +234,7 @@ if metadata_payload.get("embedding_model") != EMBEDDING_MODEL_NAME:
 with st.sidebar:
     st.header("🔎 Search Settings")
     categories_present = ["all"] + sorted(metadata_payload.get("categories", []))
-    category_labels = [CATEGORY_DISPLAY.get(c, c) for c in categories_present]
+    category_labels = [category_display_label(c) for c in categories_present]
     selected_label = st.selectbox("Category", category_labels, index=0)
     selected_category = categories_present[category_labels.index(selected_label)]
 
