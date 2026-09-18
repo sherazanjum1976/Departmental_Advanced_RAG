@@ -114,14 +114,19 @@ The key is never hard-coded in `app.py` — it's read via `st.secrets`.
 ## 6. How retrieval works
 
 1. User selects a category (`All`, `Committees`, `Counsellors`,
-   `Curriculum`, `DARC`) and types a question.
+   `Curriculum`, `DARC`), sets a **Minimum relevance** slider (0.0–1.0),
+   and types a question.
 2. The question is embedded with `all-MiniLM-L6-v2` (same model/preprocessing
    as indexing).
 3. FAISS performs cosine-similarity search (`IndexFlatIP` on normalized
    vectors) to find the most semantically relevant chunks, over-fetching a
    larger candidate pool.
-4. Results are filtered by the `category` field in metadata (skipped when
-   "All Categories" is selected) down to the top-K relevant chunks.
+4. Results are filtered by:
+   - the `category` field in metadata (skipped when "All Categories" is
+     selected), and
+   - the **relevance threshold**: any chunk whose cosine similarity score
+     is below the slider value is discarded, before taking the top-K
+     remaining chunks.
 5. The matching chunk texts are concatenated into a context block, tagged
    with their source.
 6. The context + question are sent to Groq's `openai/gpt-oss-120b`, with a
@@ -130,6 +135,22 @@ The key is never hard-coded in `app.py` — it's read via `st.secrets`.
    documents."* when the context is insufficient.
 7. The answer and a de-duplicated, human-readable list of sources
    (`Category → Subdirectory → File name`) are displayed.
+
+### Relevance threshold slider
+
+- **Higher values (e.g. 0.6–0.8)**: stricter matching, fewer but more
+  precisely relevant chunks — good when you want high-confidence answers
+  and are fine with more "not found" responses.
+- **Lower values (e.g. 0.1–0.3)**: broader recall, more chunks pass through
+  — useful when questions are phrased differently from the document
+  wording, at some risk of pulling in less-relevant context.
+- Default is `0.30`, a reasonable middle ground for MiniLM cosine scores on
+  short natural-language queries. If you consistently get "I could not find
+  this information..." responses for questions you know are answerable,
+  lower the slider; if answers feel off-topic, raise it.
+- The chosen threshold is also shown in the "View retrieved chunks (debug)"
+  panel alongside each chunk's actual relevance score, so you can calibrate
+  it against your own document set.
 
 ## 7. Testing
 

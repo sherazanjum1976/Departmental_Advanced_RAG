@@ -116,23 +116,34 @@ def embed_query(model, query: str) -> np.ndarray:
     return vec.astype("float32")
 
 
-def search(index, metadata_payload, model, query: str, category: str, top_k: int = TOP_K):
-    """FAISS similarity search, then metadata category filtering."""
+def search(index, metadata_payload, model, query: str, category: str,
+           relevance_threshold: float = 0.0, top_k: int = TOP_K):
+    """FAISS similarity search, then metadata category filtering, then a
+    user-controlled minimum relevance (cosine similarity) cutoff.
+
+    relevance_threshold is 0.0-1.0: only chunks with score >= threshold are
+    kept. Since embeddings are normalized and the index is IndexFlatIP,
+    `score` is the cosine similarity between the query and the chunk.
+    """
     chunks_meta = metadata_payload["chunks"]
     query_vec = embed_query(model, query)
 
-    # Over-fetch so filtering by category still leaves enough results.
-    fetch_k = min(len(chunks_meta), max(top_k * 8, 40))
+    # Over-fetch generously so category + threshold filtering still leaves
+    # enough candidates to choose top_k from.
+    fetch_k = min(len(chunks_meta), max(top_k * 12, 80))
     scores, indices = index.search(query_vec, fetch_k)
 
     results = []
     for score, idx in zip(scores[0], indices[0]):
         if idx == -1:
             continue
+        score = float(score)
+        if score < relevance_threshold:
+            continue
         meta = chunks_meta[idx]
         if category != "all" and meta["category"] != category:
             continue
-        results.append({**meta, "score": float(score)})
+        results.append({**meta, "score": score})
         if len(results) >= top_k:
             break
     return results
@@ -228,6 +239,20 @@ with st.sidebar:
     selected_label = st.selectbox("Category", category_labels, index=0)
     selected_category = categories_present[category_labels.index(selected_label)]
 
+    relevance_threshold = st.slider(
+        "Minimum relevance",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.30,
+        step=0.01,
+        help=(
+            "Only chunks with a cosine similarity to your question at or "
+            "above this value are used. Higher = stricter/more precise "
+            "(fewer, more relevant results). Lower = broader recall "
+            "(more results, possibly less relevant)."
+        ),
+    )
+
     st.markdown("---")
     st.caption(f"Indexed chunks: **{len(metadata_payload['chunks'])}**")
     st.caption(f"Embedding model: `{EMBEDDING_MODEL_NAME}`")
@@ -258,13 +283,24 @@ if ask_clicked:
         with st.spinner("Searching documents..."):
             try:
                 model = load_embedding_model()
-                results = search(index, metadata_payload, model, question, selected_category)
+                results = search(
+                    index, metadata_payload, model, question, selected_category,
+                    relevance_threshold=relevance_threshold,
+                )
             except Exception as e:
                 st.error(f"Retrieval error: {e}")
                 results = []
 
         if not results:
-            st.markdown('<div class="answer-box">I could not find this information in the provided documents.</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="answer-box">I could not find this information in the '
+                'provided documents.</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                f"No chunks met the minimum relevance of {relevance_threshold:.2f}. "
+                "Try lowering the 'Minimum relevance' slider in the sidebar."
+            )
         else:
             context = build_context(results)
             with st.spinner("Generating answer..."):
@@ -282,6 +318,7 @@ if ask_clicked:
             st.markdown(chips, unsafe_allow_html=True)
 
             with st.expander("View retrieved chunks (debug)"):
+                st.caption(f"Minimum relevance in effect: {relevance_threshold:.2f}")
                 for i, r in enumerate(results, start=1):
-                    st.markdown(f"**{i}. {r['category']} / {r['file_name']}** — score: {r['score']:.3f}")
+                    st.markdown(f"**{i}. {r['category']} / {r['file_name']}** — relevance: {r['score']:.3f}")
                     st.text(r["chunk_text"][:600] + ("..." if len(r["chunk_text"]) > 600 else ""))
